@@ -36,7 +36,7 @@ function diversifyConfidence(r: import("./ai/classify.js").ClassifyResult): impo
 }
 
 async function runBatchAnalyze(
-  ai: GoogleGenAI,
+  ai: GoogleGenAI | null,
   events: import("./types.js").SecurityEventRow[]
 ): Promise<{ results: import("./ai/classify.js").ClassifyResult[]; source: string }> {
   if (events.length === 0) return { results: [], source: "none" };
@@ -66,6 +66,7 @@ async function runBatchAnalyze(
     return results;
   };
   try {
+    if (!ai) throw new Error("Gemini key missing; falling back to heuristics");
     let results = await classifyWithGemini(ai, events);
     const seen = new Set(results.map((r) => r.id));
     const missing = events.filter((e) => !seen.has(e.id));
@@ -96,8 +97,30 @@ function checkBruteForce(ip: string): string | null {
   return null;
 }
 
-export function registerApiRoutes(app: Express, ai: GoogleGenAI): void {
+export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
+  // CORS for frontend deployed separately (e.g., Vercel). Set FRONTEND_ORIGIN in backend host.
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    const allow = process.env.FRONTEND_ORIGIN;
+    if (allow && origin && origin === allow) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    if (req.method === "OPTIONS") return res.status(204).end();
+    next();
+  });
+
   app.get("/api/stream", (req, res) => {
+    const origin = req.headers.origin;
+    const allow = process.env.FRONTEND_ORIGIN;
+    if (allow && origin && origin === allow) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
