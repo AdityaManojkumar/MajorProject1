@@ -18,3 +18,15 @@ View your app in AI Studio: https://ai.studio/apps/cfe5c60c-d5a1-4da0-b037-3c294
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Features (QuantumGuard upgrade)
+
+- **SSE** `GET /api/stream` — real-time event and analysis updates.
+- **Events** `GET /api/events` — normalized security events (login, replay, simulated traffic).
+- **Login demo** `POST /api/auth/login` — default `admin` / `admin123` (override with `DEMO_USER` / `DEMO_PASS`).
+- **Dataset replay** `POST /api/sim/replay/start` — sample CSVs under `datasets/samples/`.
+- **AI classify** `POST /api/analyze` — Normal / Suspicious / Confirmed attack + confidence (Gemini + heuristic fallback).
+- **Quantum RSA demo** `POST /api/quantum/rsa-demo` — small-key RSA + simulated Shor factors.
+- **PQC walkthrough** `GET /api/pqc/demo` — Kyber / Dilithium / SPHINCS+ educational steps.
+
+UI tabs: **Overview** (charts + comparison), **Logs**, **Live** (login + replay + stream), **Quantum**, **PQC**, **Defense**.

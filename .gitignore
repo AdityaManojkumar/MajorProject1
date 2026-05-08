@@ -6,3 +6,11 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# local artifacts
+cybersecurity.db
+.venv/
+
+# local artifacts
+cybersecurity.db
+.venv/

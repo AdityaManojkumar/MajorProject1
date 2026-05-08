@@ -1,0 +1,7 @@
+srcip,dstport,protocol,label
+172.16.0.10,80,tcp,normal
+172.16.0.11,443,tcp,normal
+10.1.1.50,21,tcp,attack
+10.1.1.51,23,tcp,attack
+192.168.50.1,1433,tcp,SQL Injection
+192.168.50.2,445,tcp,attack

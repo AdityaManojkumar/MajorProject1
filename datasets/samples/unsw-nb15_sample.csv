@@ -1,0 +1,7 @@
+Source IP,Destination Port,attack_cat,Label
+149.171.126.6,80,Normal,Normal
+149.171.126.7,443,Normal,Normal
+175.45.176.3,80,Exploits,Attack
+175.45.176.4,22,Fuzzers,Attack
+59.166.0.2,8080,DoS,Attack
+1.0.0.1,53,Reconnaissance,Attack

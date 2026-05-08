@@ -1,46 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Shield, 
-  Activity, 
-  Lock, 
-  AlertTriangle, 
-  Terminal, 
-  Cpu, 
-  Globe, 
-  Zap,
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Shield,
+  Activity,
+  Lock,
+  Terminal,
+  Cpu,
+  Globe,
   ShieldAlert,
   ShieldCheck,
   RefreshCw,
-  Database,
-  Eye
-} from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+  Eye,
+  Zap,
+  X,
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
   ResponsiveContainer,
   AreaChart,
   Area,
-  PieChart,
-  Pie,
-  Cell
-} from 'recharts';
-import { PQCService } from './services/pqc.ts';
-
-// Types
-interface Log {
-  id: number;
-  timestamp: string;
-  source_ip: string;
-  event_type: string;
-  severity: string;
-  description: string;
-  status: string;
-}
+} from "recharts";
+import type { SecurityEvent } from "./types/event";
+import { RealtimePanel } from "./components/RealtimePanel.tsx";
+import { LoginMonitor } from "./components/LoginMonitor.tsx";
+import { ComparisonDashboard } from "./components/ComparisonDashboard.tsx";
+import { QuantumDemoPanel } from "./components/QuantumDemoPanel.tsx";
+import { PqcApiPanel } from "./components/PqcApiPanel.tsx";
+import { PqcProtectionPanel } from "./components/PqcProtectionPanel.tsx";
 
 interface BlockedIp {
   id: number;
@@ -50,88 +41,153 @@ interface BlockedIp {
 }
 
 export default function App() {
-  const [logs, setLogs] = useState<Log[]>([]);
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [blockedIps, setBlockedIps] = useState<BlockedIp[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [pqcStatus, setPqcStatus] = useState<'idle' | 'generating' | 'ready'>('idle');
-  const [secureMessage, setSecureMessage] = useState('');
-  const [decryptedMessage, setDecryptedMessage] = useState('');
-  const [keyPair, setKeyPair] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'logs' | 'pqc' | 'defense'>('overview');
+  const [activeTab, setActiveTab] = useState<"overview" | "logs" | "live" | "quantum" | "pqc" | "defense">(
+    "overview"
+  );
+  const [statsRefresh, setStatsRefresh] = useState(0);
+  const [quickDataset, setQuickDataset] = useState<"cicids2017" | "nsl-kdd" | "unsw-nb15">("cicids2017");
+  const [injectModal, setInjectModal] = useState<{
+    id: number;
+    sourceIp: string;
+    datasetId: string;
+    description: string;
+    attackTypeLabel: string;
+    groundTruth: string;
+  } | null>(null);
+  type AnalysisRow = {
+    id: number;
+    classification: string;
+    attack_type: string | null;
+    confidence: number;
+    reason: string;
+    httpStatus: number;
+    statusLine: string;
+    attackSummary: string;
+    recommendation: string;
+  };
+  const [analysisReport, setAnalysisReport] = useState<{
+    processed: number;
+    source: string;
+    results: AnalysisRow[];
+  } | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [injectErr, setInjectErr] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [evRes, blockedRes] = await Promise.all([
+        fetch("/api/events"),
+        fetch("/api/blocked-ips"),
+      ]);
+      setEvents((await evRes.json()) as SecurityEvent[]);
+      setBlockedIps((await blockedRes.json()) as BlockedIp[]);
+    } catch (e) {
+      console.error("Fetch Error:", e);
+    }
+  }, []);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const onEventMessage = useCallback((ev: SecurityEvent) => {
+    setEvents((prev) => {
+      if (prev.some((p) => p.id === ev.id)) return prev;
+      return [ev, ...prev].slice(0, 250);
+    });
   }, []);
 
-  const fetchData = async () => {
+  const onEventAnalyzed = useCallback((ev: SecurityEvent) => {
+    setEvents((prev) => prev.map((p) => (p.id === ev.id ? { ...p, ...ev } : p)));
+  }, []);
+
+  const injectDatasetAttack = async (attackType: string) => {
+    setInjectErr(null);
     try {
-      const logsRes = await fetch('/api/logs');
-      const logsData = await logsRes.json();
-      setLogs(logsData);
-
-      const blockedRes = await fetch('/api/blocked-ips');
-      const blockedData = await blockedRes.json();
-      setBlockedIps(blockedData);
-    } catch (error) {
-      console.error("Fetch Error:", error);
+      const res = await fetch("/api/sim/inject-sample", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataset: quickDataset, attackType }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        inject?: {
+          id: number;
+          sourceIp: string;
+          datasetId: string;
+          description: string;
+          attackTypeLabel: string;
+          groundTruth: string;
+        };
+        error?: string;
+      };
+      if (!res.ok) {
+        setInjectErr(data.error || "Injection failed");
+        return;
+      }
+      if (data.inject) setInjectModal(data.inject);
+      setStatsRefresh((k) => k + 1);
+      await fetchData();
+    } catch (e) {
+      setInjectErr(e instanceof Error ? e.message : "Injection failed");
     }
-  };
-
-  const simulateAttack = async (type: string) => {
-    await fetch('/api/simulate-attack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type })
-    });
-    fetchData();
   };
 
   const runAiAnalysis = async () => {
     setIsAnalyzing(true);
+    setAnalysisError(null);
     try {
-      await fetch('/api/analyze-threats', { method: 'POST' });
-      fetchData();
-    } catch (error) {
-      console.error("Analysis Error:", error);
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 25 }),
+      });
+      const data = (await res.json()) as {
+        processed: number;
+        source: string;
+        results: AnalysisRow[];
+      };
+      setAnalysisReport(data);
+      setStatsRefresh((k) => k + 1);
+      await fetchData();
+    } catch (e) {
+      setAnalysisError(e instanceof Error ? e.message : "Analysis failed");
+      setAnalysisReport(null);
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  const handlePqcDemo = () => {
-    setPqcStatus('generating');
-    setTimeout(() => {
-      const keys = PQCService.generateKeyPair();
-      setKeyPair(keys);
-      setPqcStatus('ready');
-      
-      const msg = "Quantum-Safe Protocol Initialized";
-      const encrypted = PQCService.encryptMessage(msg, keys.publicKey);
-      const decrypted = PQCService.decryptMessage(encrypted, keys.privateKey);
-      
-      setSecureMessage(JSON.stringify(encrypted.slice(0, 2)).substring(0, 50) + "...");
-      setDecryptedMessage(decrypted);
-    }, 1500);
-  };
-
+  const confirmedCount = events.filter(
+    (e) => e.classification === "confirmed_attack" || e.ground_truth_label === "attack"
+  ).length;
   const stats = [
-    { label: 'System Health', value: '98.2%', icon: Cpu, color: 'text-emerald-400' },
-    { label: 'Threats Blocked', value: blockedIps.length, icon: ShieldAlert, color: 'text-orange-400' },
-    { label: 'Active Monitors', value: '24/7', icon: Eye, color: 'text-blue-400' },
-    { label: 'Encryption Level', value: 'PQC-LWE', icon: Lock, color: 'text-purple-400' },
+    { label: "System Health", value: "98.2%", icon: Cpu, color: "text-emerald-400" },
+    { label: "Threats flagged", value: confirmedCount, icon: ShieldAlert, color: "text-orange-400" },
+    { label: "Live events", value: events.length, icon: Eye, color: "text-blue-400" },
+    { label: "Encryption", value: "PQC+LWE", icon: Lock, color: "text-purple-400" },
   ];
 
-  const chartData = logs.slice(0, 20).reverse().map((l, i) => ({
-    time: new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    threats: l.severity === 'high' ? 1 : 0,
-    traffic: Math.floor(Math.random() * 100) + 20
+  const chartData = events.slice(0, 24).reverse().map((e) => ({
+    time: new Date(e.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    threats: e.severity === "high" || e.classification === "confirmed_attack" ? 1 : 0,
+    traffic: 30 + (e.id % 40),
   }));
+
+  const tabs: Array<{ id: typeof activeTab; label: string }> = [
+    { id: "overview", label: "Overview" },
+    { id: "logs", label: "Logs" },
+    { id: "live", label: "Live" },
+    { id: "quantum", label: "Quantum" },
+    { id: "pqc", label: "PQC" },
+    { id: "defense", label: "Defense" },
+  ];
 
   return (
     <div className="min-h-screen bg-[#0a0a0c] text-zinc-300 font-sans selection:bg-emerald-500/30">
-      {/* Header */}
       <header className="border-b border-white/5 bg-black/40 backdrop-blur-xl sticky top-0 z-50">
         <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -140,37 +196,36 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-white tracking-tight">QuantumGuard AI</h1>
-              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 font-semibold">Post-Quantum Security Node</p>
+              <p className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 font-semibold">
+                Real-time + dataset replay + PQC
+              </p>
             </div>
           </div>
 
-          <nav className="flex items-center gap-1">
-            {['overview', 'logs', 'pqc', 'defense'].map((tab) => (
+          <nav className="flex items-center gap-1 flex-wrap justify-end">
+            {tabs.map((tab) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab as any)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  activeTab === tab 
-                    ? 'bg-white/5 text-white shadow-[0_0_20px_rgba(255,255,255,0.03)]' 
-                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                  activeTab === tab.id
+                    ? "bg-white/5 text-white shadow-[0_0_20px_rgba(255,255,255,0.03)]"
+                    : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab.label}
               </button>
             ))}
           </nav>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 rounded-full border border-emerald-500/20">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">System Live</span>
-            </div>
+          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 rounded-full border border-emerald-500/20">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider">Live</span>
           </div>
         </div>
       </header>
 
       <main className="max-w-[1600px] mx-auto p-6 space-y-6">
-        {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {stats.map((stat, i) => (
             <motion.div
@@ -191,150 +246,265 @@ export default function App() {
           ))}
         </div>
 
-        {activeTab === 'overview' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Main Chart */}
-            <div className="lg:col-span-2 bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="text-lg font-bold text-white">Network Activity</h3>
-                  <p className="text-xs text-zinc-500">Real-time traffic analysis and threat detection</p>
-                </div>
-                <div className="flex gap-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-emerald-500/50" />
-                    <span className="text-xs text-zinc-400">Traffic</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-orange-500/50" />
-                    <span className="text-xs text-zinc-400">Threats</span>
+        {activeTab === "overview" && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Network activity</h3>
+                    <p className="text-xs text-zinc-500">Event timeline (recent)</p>
+                    <p className="text-[10px] text-zinc-600 mt-2 max-w-xl leading-relaxed">
+                      These charts are <strong className="text-zinc-400">dynamic</strong>: they re-render from the current event list
+                      returned by <code className="text-emerald-600/90">GET /api/events</code> (threat line + traffic proxy). Refresh the
+                      page or trigger Live / dataset inject to see points change.
+                    </p>
                   </div>
                 </div>
-              </div>
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="colorTraffic" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                    <XAxis dataKey="time" stroke="#ffffff20" fontSize={10} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#ffffff20" fontSize={10} tickLine={false} axisLine={false} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#18181b', border: '1px solid #ffffff10', borderRadius: '12px' }}
-                      itemStyle={{ fontSize: '12px' }}
-                    />
-                    <Area type="monotone" dataKey="traffic" stroke="#10b981" fillOpacity={1} fill="url(#colorTraffic)" strokeWidth={2} />
-                    <Line type="monotone" dataKey="threats" stroke="#f97316" strokeWidth={2} dot={{ r: 4, fill: '#f97316' }} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="space-y-6">
-              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
-                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-yellow-400" />
-                  Threat Simulator
-                </h3>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    { label: 'DDoS Attack', type: 'DDoS', color: 'hover:bg-red-500/10 hover:border-red-500/20' },
-                    { label: 'Brute Force', type: 'Brute Force', color: 'hover:bg-orange-500/10 hover:border-orange-500/20' },
-                    { label: 'SQL Injection', type: 'SQLi', color: 'hover:bg-purple-500/10 hover:border-purple-500/20' },
-                    { label: 'Malware', type: 'Malware', color: 'hover:bg-emerald-500/10 hover:border-emerald-500/20' },
-                  ].map((btn) => (
-                    <button
-                      key={btn.type}
-                      onClick={() => simulateAttack(btn.type)}
-                      className={`p-3 rounded-xl border border-white/5 bg-white/5 text-xs font-bold text-zinc-400 transition-all ${btn.color} active:scale-95`}
-                    >
-                      {btn.label}
-                    </button>
-                  ))}
+                <div className="h-[300px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chartData}>
+                      <defs>
+                        <linearGradient id="colorTraffic" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                      <XAxis dataKey="time" stroke="#ffffff20" fontSize={10} tickLine={false} axisLine={false} />
+                      <YAxis stroke="#ffffff20" fontSize={10} tickLine={false} axisLine={false} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "#18181b",
+                          border: "1px solid #ffffff10",
+                          borderRadius: "12px",
+                        }}
+                        itemStyle={{ fontSize: "12px" }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="traffic"
+                        stroke="#10b981"
+                        fillOpacity={1}
+                        fill="url(#colorTraffic)"
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="h-[200px] w-full mt-4">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" />
+                      <XAxis dataKey="time" stroke="#ffffff20" fontSize={10} />
+                      <YAxis stroke="#ffffff20" fontSize={10} />
+                      <Tooltip contentStyle={{ backgroundColor: "#18181b", border: "1px solid #27272a" }} />
+                      <Line type="stepAfter" dataKey="threats" stroke="#f97316" strokeWidth={2} dot />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-400" />
-                    AI Defense
+              <div className="space-y-6">
+                <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
+                  <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-yellow-400" />
+                    Quick simulate
                   </h3>
-                  {isAnalyzing && <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />}
+                  <p className="text-[10px] text-zinc-500 mb-3 leading-relaxed">
+                    Launch a pre-scripted <strong className="text-zinc-400">attack scenario</strong> into the monitoring pipeline. A
+                    security event is ingested in real time with source address and threat class — the same as live production
+                    traffic would appear to the analyst.
+                  </p>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Scenario mix</label>
+                  <select
+                    value={quickDataset}
+                    onChange={(e) => setQuickDataset(e.target.value as typeof quickDataset)}
+                    className="w-full mb-3 px-2 py-2 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+                  >
+                    <option value="cicids2017">Profile A — high-volume mix</option>
+                    <option value="nsl-kdd">Profile B — enterprise blend</option>
+                    <option value="unsw-nb15">Profile C — wide attack surface</option>
+                  </select>
+                  {injectErr && (
+                    <p className="text-[11px] text-red-400 mb-2 border border-red-500/30 rounded-lg px-2 py-1.5">{injectErr}</p>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    {(
+                      [
+                        { label: "DDoS", attackType: "ddos" },
+                        { label: "Brute Force", attackType: "brute_force" },
+                        { label: "SQLi", attackType: "sqli" },
+                        { label: "Malware", attackType: "botnet" },
+                      ] as const
+                    ).map((btn) => (
+                      <button
+                        key={btn.label}
+                        type="button"
+                        onClick={() => injectDatasetAttack(btn.attackType)}
+                        className="p-3 rounded-xl border border-white/5 bg-white/5 text-xs font-bold text-zinc-400 hover:bg-red-500/10"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Trigger autonomous threat analysis using Gemini AI. The system will evaluate pending logs and automatically update firewall rules.
-                </p>
-                <button
-                  onClick={runAiAnalysis}
-                  disabled={isAnalyzing}
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-black font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-                >
-                  <Activity className="w-4 h-4" />
-                  Run AI Analysis
-                </button>
+
+                <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                      AI classify
+                    </h3>
+                    {isAnalyzing && <RefreshCw className="w-4 h-4 text-emerald-400 animate-spin" />}
+                  </div>
+                  <p className="text-xs text-zinc-500 mb-4">
+                    Classifies pending events (Gemini when available, else heuristic). Results appear below — not only in the Live
+                    stream.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={runAiAnalysis}
+                    disabled={isAnalyzing}
+                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-black font-bold rounded-xl flex items-center justify-center gap-2"
+                  >
+                    <Activity className="w-4 h-4" />
+                    Run AI analysis
+                  </button>
+                  {analysisError && (
+                    <p className="mt-3 text-xs text-red-400 border border-red-500/30 rounded-lg px-2 py-2">{analysisError}</p>
+                  )}
+                  {analysisReport && analysisReport.processed > 0 && (
+                    <div className="mt-4 space-y-3 max-h-[340px] overflow-y-auto border border-white/10 rounded-xl p-3 bg-black/30">
+                      <p className="text-[10px] text-zinc-500">
+                        Source: <span className="text-zinc-300">{analysisReport.source}</span> · processed{" "}
+                        {analysisReport.processed}
+                      </p>
+                      {analysisReport.results.map((r) => (
+                        <div
+                          key={r.id}
+                          className="rounded-lg border border-white/10 p-3 text-[11px] space-y-1.5 bg-zinc-900/50"
+                        >
+                          <p className="font-bold text-white">
+                            Event #{r.id}{" "}
+                            <span className="text-emerald-400 font-mono">
+                              HTTP {r.httpStatus}
+                            </span>{" "}
+                            — {r.statusLine}
+                          </p>
+                          <p className="text-zinc-400">
+                            <span className="text-zinc-500">Classification:</span> {r.classification}
+                            {r.attack_type && r.attack_type !== "none" && (
+                              <span className="text-orange-300"> · type: {r.attack_type}</span>
+                            )}
+                          </p>
+                          <p className="text-zinc-400">
+                            <span className="text-zinc-500">Confidence:</span>{" "}
+                            <span className="font-mono text-cyan-300">{Math.round(r.confidence * 100)}%</span>
+                          </p>
+                          <p className="text-zinc-300 leading-snug">{r.attackSummary}</p>
+                          <p className="text-zinc-500 italic">{r.reason}</p>
+                          <p className="text-emerald-400/90 pt-1 border-t border-white/5">{r.recommendation}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {analysisReport && analysisReport.processed === 0 && (
+                    <p className="mt-3 text-xs text-zinc-500">No pending events to analyze.</p>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/40 p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-white">Classical vs quantum comparison</h4>
+                <p className="text-xs text-zinc-500 mt-1 max-w-xl">
+                  Charts and matrices live on the <strong className="text-zinc-400">Defense</strong> tab; Overview stays focused on
+                  activity and scenario triggers.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("defense")}
+                className="shrink-0 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-bold text-white border border-white/10"
+              >
+                Open Defense → comparison
+              </button>
+            </div>
+          </>
         )}
 
-        {activeTab === 'logs' && (
+        {activeTab === "logs" && (
           <div className="bg-zinc-900/40 border border-white/5 rounded-2xl overflow-hidden">
             <div className="p-6 border-b border-white/5 flex items-center justify-between">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Terminal className="w-5 h-5 text-blue-400" />
-                Security Event Logs
+                Security events
               </h3>
-              <button onClick={fetchData} className="p-2 hover:bg-white/5 rounded-lg transition-colors">
+              <button type="button" onClick={fetchData} className="p-2 hover:bg-white/5 rounded-lg">
                 <RefreshCw className="w-4 h-4 text-zinc-500" />
               </button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-white/5">
-                    <th className="p-4 text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Timestamp</th>
-                    <th className="p-4 text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Source IP</th>
-                    <th className="p-4 text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Event Type</th>
-                    <th className="p-4 text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Severity</th>
-                    <th className="p-4 text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Status</th>
+                  <tr className="bg-white/5 text-[10px] uppercase text-zinc-500">
+                    <th className="p-3">Time</th>
+                    <th className="p-3">IP</th>
+                    <th className="p-3">Kind</th>
+                    <th className="p-3">Login</th>
+                    <th className="p-3">Severity</th>
+                    <th className="p-3">Classification</th>
+                    <th className="p-3">Conf.</th>
+                    <th className="p-3">Reason</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   <AnimatePresence mode="popLayout">
-                    {logs.map((log) => (
-                      <motion.tr 
+                    {events.map((e) => (
+                      <motion.tr
                         layout
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        key={log.id} 
-                        className="hover:bg-white/[0.02] transition-colors group"
+                        key={e.id}
+                        className="hover:bg-white/[0.02]"
                       >
-                        <td className="p-4 text-xs font-mono text-zinc-400">{new Date(log.timestamp).toLocaleString()}</td>
-                        <td className="p-4 text-xs font-mono text-white">{log.source_ip}</td>
-                        <td className="p-4 text-xs font-medium text-zinc-300">{log.event_type}</td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded-md text-[10px] font-bold uppercase ${
-                            log.severity === 'high' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                          }`}>
-                            {log.severity}
-                          </span>
+                        <td className="p-3 font-mono text-zinc-400 whitespace-nowrap">
+                          {new Date(e.timestamp).toLocaleString()}
                         </td>
-                        <td className="p-4">
-                          <span className={`flex items-center gap-1.5 text-[10px] font-bold uppercase ${
-                            log.status === 'blocked' ? 'text-orange-400' : log.status === 'cleared' ? 'text-emerald-400' : 'text-zinc-500'
-                          }`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${
-                              log.status === 'blocked' ? 'bg-orange-400' : log.status === 'cleared' ? 'bg-emerald-400' : 'bg-zinc-500'
-                            }`} />
-                            {log.status}
+                        <td className="p-3 font-mono text-white">{e.source_ip}</td>
+                        <td className="p-3">{e.event_kind}</td>
+                        <td className="p-3">
+                          {e.action.startsWith("auth")
+                            ? e.login_success === 1
+                              ? "OK"
+                              : "FAIL"
+                            : "—"}
+                        </td>
+                        <td className="p-3">{e.severity}</td>
+                        <td className="p-3">
+                          <span
+                            className={
+                              e.classification === "confirmed_attack"
+                                ? "text-red-400"
+                                : e.classification === "suspicious"
+                                  ? "text-yellow-400"
+                                  : e.classification === "normal"
+                                    ? "text-emerald-400"
+                                    : "text-zinc-500"
+                            }
+                          >
+                            {e.classification || "pending"}
                           </span>
+                          {e.attack_type && e.attack_type !== "none" && (
+                            <span className="block text-[10px] text-zinc-500">{e.attack_type}</span>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          {e.confidence != null ? `${Math.round(e.confidence * 100)}%` : "—"}
+                        </td>
+                        <td className="p-3 text-zinc-400 max-w-[220px] truncate" title={e.reason || ""}>
+                          {e.reason || "—"}
                         </td>
                       </motion.tr>
                     ))}
@@ -345,171 +515,144 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'pqc' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-8 flex flex-col items-center justify-center text-center space-y-6">
-              <div className="w-20 h-20 bg-purple-500/10 rounded-3xl flex items-center justify-center border border-purple-500/20">
-                <Lock className="w-10 h-10 text-purple-400" />
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white mb-2">Post-Quantum Cryptography</h3>
-                <p className="text-zinc-500 max-w-md mx-auto leading-relaxed">
-                  Simulate quantum-resistant secure communication using lattice-based Learning With Errors (LWE) algorithms.
-                </p>
-              </div>
-              <button
-                onClick={handlePqcDemo}
-                disabled={pqcStatus === 'generating'}
-                className="px-8 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 text-white font-bold rounded-xl transition-all shadow-[0_0_30px_rgba(168,85,247,0.2)]"
-              >
-                {pqcStatus === 'generating' ? 'Generating Keys...' : 'Initialize Secure Channel'}
-              </button>
-            </div>
-
-            <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-8 space-y-6">
-              <h4 className="text-sm font-bold text-white uppercase tracking-widest flex items-center gap-2">
-                <Database className="w-4 h-4 text-purple-400" />
-                Quantum-Safe Protocol Output
-              </h4>
-              
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Encrypted Ciphertext (LWE Samples)</label>
-                  <div className="p-4 bg-black/40 border border-white/5 rounded-xl font-mono text-xs text-purple-400/80 break-all min-h-[60px]">
-                    {secureMessage || "Awaiting encryption..."}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Decrypted Result (Verified)</label>
-                  <div className="p-4 bg-black/40 border border-white/5 rounded-xl font-mono text-xs text-emerald-400 min-h-[60px] flex items-center">
-                    {decryptedMessage ? (
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-4 h-4" />
-                        {decryptedMessage}
-                      </div>
-                    ) : "---"}
-                  </div>
-                </div>
-
-                <div className="p-4 bg-purple-500/5 border border-purple-500/10 rounded-xl">
-                  <p className="text-[11px] text-purple-300/70 leading-relaxed italic">
-                    Note: This simulation uses a lattice-based LWE scheme where the security is derived from the hardness of finding the shortest vector in a high-dimensional lattice, a problem currently unsolvable by quantum computers.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-2 bg-zinc-900/40 border border-white/5 rounded-2xl p-8">
-              <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-                <Shield className="w-5 h-5 text-emerald-400" />
-                System Architecture
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="space-y-3">
-                  <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 text-emerald-400 font-bold text-xs">01</div>
-                  <h4 className="text-sm font-bold text-white">Log Collection</h4>
-                  <p className="text-xs text-zinc-500 leading-relaxed">Real-time ingestion of network traffic, authentication attempts, and system events into a secure SQLite database.</p>
-                </div>
-                <div className="space-y-3">
-                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center border border-blue-500/20 text-blue-400 font-bold text-xs">02</div>
-                  <h4 className="text-sm font-bold text-white">AI Threat Analysis</h4>
-                  <p className="text-xs text-zinc-500 leading-relaxed">Gemini 2.0 Flash models analyze log patterns to identify sophisticated attacks that bypass traditional signature-based systems.</p>
-                </div>
-                <div className="space-y-3">
-                  <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center border border-purple-500/20 text-purple-400 font-bold text-xs">03</div>
-                  <h4 className="text-sm font-bold text-white">Quantum Defense</h4>
-                  <p className="text-xs text-zinc-500 leading-relaxed">Post-quantum cryptographic layers (LWE) ensure that even if an attacker intercepts traffic, it remains secure against future quantum decryption.</p>
-                </div>
-              </div>
-            </div>
+        {activeTab === "live" && (
+          <div className="space-y-6">
+            <LoginMonitor onLoginAttempt={fetchData} />
+            <RealtimePanel
+              events={events}
+              onEventMessage={onEventMessage}
+              onEventAnalyzed={onEventAnalyzed}
+            />
           </div>
         )}
 
-        {activeTab === 'defense' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
+        {activeTab === "quantum" && (
+          <div className="space-y-6">
+            <QuantumDemoPanel onComplete={() => setStatsRefresh((k) => k + 1)} />
+          </div>
+        )}
+
+        {activeTab === "pqc" && (
+          <div className="space-y-6">
+            <PqcProtectionPanel />
+            <PqcApiPanel />
+          </div>
+        )}
+
+        {activeTab === "defense" && (
+          <div className="space-y-6">
+            <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
               <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-orange-400" />
-                Active Firewall Rules (Blocked IPs)
+                Blocked IPs (legacy / optional)
               </h3>
               <div className="space-y-3">
                 {blockedIps.length === 0 ? (
-                  <div className="p-12 text-center border border-dashed border-white/5 rounded-xl">
-                    <p className="text-zinc-500 text-sm">No active IP blocks detected.</p>
-                  </div>
+                  <p className="text-zinc-500 text-sm">No blocked IPs.</p>
                 ) : (
                   blockedIps.map((block) => (
-                    <div key={block.id} className="p-4 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between group hover:border-orange-500/20 transition-all">
+                    <div
+                      key={block.id}
+                      className="p-4 bg-white/5 border border-white/5 rounded-xl flex justify-between"
+                    >
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 bg-orange-500/10 rounded-lg flex items-center justify-center border border-orange-500/20">
-                          <Globe className="w-5 h-5 text-orange-400" />
-                        </div>
+                        <Globe className="w-5 h-5 text-orange-400" />
                         <div>
                           <p className="text-sm font-bold text-white font-mono">{block.ip}</p>
-                          <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{block.reason}</p>
+                          <p className="text-[10px] text-zinc-500">{block.reason}</p>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] text-zinc-500 mb-1">{new Date(block.timestamp).toLocaleTimeString()}</p>
-                        <span className="px-2 py-0.5 bg-orange-500/10 text-orange-400 text-[9px] font-bold rounded uppercase border border-orange-500/20">Blocked</span>
                       </div>
                     </div>
                   ))
                 )}
               </div>
             </div>
-
-            <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
-              <h3 className="text-lg font-bold text-white mb-6">Defense Strategy</h3>
-              <div className="space-y-6">
-                <div className="flex gap-4">
-                  <div className="w-1 h-12 bg-emerald-500 rounded-full" />
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Autonomous Response</h4>
-                    <p className="text-xs text-zinc-500 leading-relaxed">AI models automatically identify and block malicious IP addresses within 500ms of detection.</p>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <div className="w-1 h-12 bg-blue-500 rounded-full" />
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Quantum-Safe Handshake</h4>
-                    <p className="text-xs text-zinc-500 leading-relaxed">All administrative commands are signed using hash-based digital signatures (LMS/XMSS).</p>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <div className="w-1 h-12 bg-purple-500 rounded-full" />
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Lattice Encryption</h4>
-                    <p className="text-xs text-zinc-500 leading-relaxed">Data at rest and in transit is protected by LWE-based encryption schemes.</p>
-                  </div>
-                </div>
-              </div>
+            <ComparisonDashboard events={events} refreshKey={statsRefresh} />
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-2xl border border-white/10 bg-zinc-950/40 p-4">
+              <p className="text-xs text-zinc-500">
+                <strong className="text-zinc-400">Overview</strong> has network activity and quick attack scenarios; this tab holds
+                the full comparison.
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab("overview")}
+                className="shrink-0 py-2.5 px-5 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-bold text-white"
+              >
+                ← Overview
+              </button>
             </div>
           </div>
         )}
       </main>
 
-      {/* Footer */}
+      {injectModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="inject-modal-title"
+        >
+          <div className="relative bg-zinc-900 border border-emerald-500/25 rounded-2xl max-w-lg w-full p-6 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setInjectModal(null)}
+              className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white"
+              aria-label="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h3 id="inject-modal-title" className="text-lg font-bold text-white pr-10 mb-1">
+              Security event recorded
+            </h3>
+            <p className="text-xs text-zinc-500 mb-4">
+              The attack scenario was ingested into the event pipeline and is visible in Logs and live analytics.
+            </p>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between gap-4 border-b border-white/5 pb-2">
+                <dt className="text-zinc-500">Event reference</dt>
+                <dd className="font-mono text-emerald-400">#{injectModal.id}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-white/5 pb-2">
+                <dt className="text-zinc-500">Attacker / source</dt>
+                <dd className="font-mono text-white">{injectModal.sourceIp}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-white/5 pb-2">
+                <dt className="text-zinc-500">Threat category</dt>
+                <dd className="text-orange-300 capitalize">{injectModal.attackTypeLabel.replace(/_/g, " ")}</dd>
+              </div>
+              <div className="flex justify-between gap-4 border-b border-white/5 pb-2">
+                <dt className="text-zinc-500">Priority</dt>
+                <dd className={injectModal.groundTruth === "attack" ? "text-red-400" : "text-zinc-300"}>
+                  {injectModal.groundTruth === "attack" ? "Elevated — review required" : "Standard monitoring"}
+                </dd>
+              </div>
+              <div className="pt-1">
+                <dt className="text-zinc-500 text-xs mb-1">Observed activity</dt>
+                <dd className="text-zinc-300 text-xs leading-relaxed">
+                  {injectModal.description.replace(/^(Dataset replay|Application-layer signal):\s*/i, "Reported: ")}
+                </dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              onClick={() => setInjectModal(null)}
+              className="mt-6 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
       <footer className="max-w-[1600px] mx-auto px-6 py-8 border-t border-white/5 mt-12">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-emerald-500" />
-            <span className="text-xs font-bold text-white tracking-tight">QuantumGuard AI v1.0.4</span>
+            <span className="text-xs font-bold text-white">QuantumGuard AI</span>
           </div>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-semibold">
-            Securing the Future Against Quantum Threats
+          <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em]">
+            Real-time monitoring · Dataset replay · AI · PQC
           </p>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Node: SG-01</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" />
-              <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Latency: 14ms</span>
-            </div>
-          </div>
         </div>
       </footer>
     </div>
