@@ -56,7 +56,36 @@ export function initDb(path = "cybersecurity.db"): Database.Database {
 
   CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
   CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+
+  CREATE TABLE IF NOT EXISTS mitigation_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    osi_layer TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'applied',
+    details TEXT NOT NULL DEFAULT '',
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_mitigation_event ON mitigation_actions(event_id);
   `);
+
+  // Protocol Analysis Layer columns (idempotent migrations)
+  const protocolCols: Array<[string, string]> = [
+    ["osi_layer", "TEXT"],
+    ["protocol", "TEXT"],
+    ["severity_score", "REAL"],
+    ["crypto_threat_class", "TEXT"],
+    ["mitigation_status", "TEXT"],
+    ["attack_metadata_json", "TEXT"],
+    ["protocol_analysis_json", "TEXT"],
+  ];
+  for (const [col, typ] of protocolCols) {
+    try {
+      db.exec(`ALTER TABLE events ADD COLUMN ${col} ${typ}`);
+    } catch {
+      /* column exists */
+    }
+  }
 
   // Normalize legacy replay row labels to application-layer semantics (idempotent)
   db.exec(`
@@ -184,11 +213,96 @@ export function updateEventAnalysis(
   classification: string,
   attack_type: string | null,
   confidence: number,
-  reason: string
+  reason: string,
+  extras?: {
+    osi_layer?: string | null;
+    protocol?: string | null;
+    severity_score?: number | null;
+    crypto_threat_class?: string | null;
+    mitigation_status?: string | null;
+    attack_metadata_json?: string | null;
+  }
 ): void {
   db.prepare(
-    `UPDATE events SET classification = ?, attack_type = ?, confidence = ?, reason = ?, status = 'analyzed' WHERE id = ?`
-  ).run(classification, attack_type, confidence, reason, id);
+    `UPDATE events SET
+      classification = ?, attack_type = ?, confidence = ?, reason = ?, status = 'analyzed',
+      osi_layer = COALESCE(?, osi_layer),
+      protocol = COALESCE(?, protocol),
+      severity_score = COALESCE(?, severity_score),
+      crypto_threat_class = COALESCE(?, crypto_threat_class),
+      mitigation_status = COALESCE(?, mitigation_status),
+      attack_metadata_json = COALESCE(?, attack_metadata_json)
+    WHERE id = ?`
+  ).run(
+    classification,
+    attack_type,
+    confidence,
+    reason,
+    extras?.osi_layer ?? null,
+    extras?.protocol ?? null,
+    extras?.severity_score ?? null,
+    extras?.crypto_threat_class ?? null,
+    extras?.mitigation_status ?? null,
+    extras?.attack_metadata_json ?? null,
+    id
+  );
+}
+
+export function updateEventProtocolAnalysis(
+  id: number,
+  fields: {
+    osi_layer?: string;
+    protocol?: string;
+    protocol_analysis_json?: string;
+  }
+): void {
+  db.prepare(
+    `UPDATE events SET
+      osi_layer = COALESCE(?, osi_layer),
+      protocol = COALESCE(?, protocol),
+      protocol_analysis_json = COALESCE(?, protocol_analysis_json)
+    WHERE id = ?`
+  ).run(fields.osi_layer ?? null, fields.protocol ?? null, fields.protocol_analysis_json ?? null, id);
+}
+
+export function insertMitigationAction(
+  eventId: number,
+  osiLayer: string,
+  actionType: string,
+  status: string,
+  details: string
+): number {
+  const info = db
+    .prepare(
+      `INSERT INTO mitigation_actions (event_id, osi_layer, action_type, status, details)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(eventId, osiLayer, actionType, status, details);
+  return Number(info.lastInsertRowid);
+}
+
+export function listMitigationActions(eventId?: number, limit = 100) {
+  if (eventId != null) {
+    return db
+      .prepare("SELECT * FROM mitigation_actions WHERE event_id = ? ORDER BY timestamp DESC")
+      .all(eventId);
+  }
+  return db
+    .prepare("SELECT * FROM mitigation_actions ORDER BY timestamp DESC LIMIT ?")
+    .all(limit);
+}
+
+export function listProtocolThreats(limit = 30) {
+  return db
+    .prepare(
+      `SELECT id, timestamp, source_ip, attack_type, protocol, osi_layer,
+              severity_score, crypto_threat_class, mitigation_status, classification,
+              attack_metadata_json, description
+       FROM events
+       WHERE attack_metadata_json IS NOT NULL OR (classification IS NOT NULL AND classification != 'normal')
+       ORDER BY timestamp DESC LIMIT ?`
+    )
+    .all(limit);
 }
 
 export function listBlockedIps() {

@@ -8,15 +8,24 @@ import {
   listBlockedIps,
   upsertBlockedIp,
   getDb,
+  listProtocolThreats,
+  listMitigationActions,
 } from "./db.js";
 import { publish, addSseClient, removeSseClient } from "./stream.js";
-import { classifyWithGemini, classifyHeuristic } from "./ai/classify.js";
+import { classifyWithGemini, classifyHeuristic, normalizeClassifyResult } from "./ai/classify.js";
 import { loadDataset, filterAttackRows, type DatasetId } from "./replay/loaders.js";
 import { startReplay, stopReplay, injectDatasetSample } from "./replay/scheduler.js";
 import { enrichAnalysisResults } from "./ai/analysis-display.js";
 import { runRsaShorDemo } from "./quantum/rsa-shor.js";
 import { runPqcDemo } from "./pqc/demo.js";
 import { runRsaLatticeProtectionDemo } from "./pqc/rsa-vs-lattice-demo.js";
+import { processEventThroughProtocolLayer, refreshProtocolAnalysis } from "./pipeline.js";
+import { analyzeProtocolTraffic, buildAttackMetadata } from "./protocol/analyzer.js";
+import { classifyCryptoThreat, PROTECTED_OSI_LAYERS } from "./protocol/crypto-security.js";
+import {
+  applyLayerAwareMitigation,
+  mitigationStatusFromResults,
+} from "./incident/response.js";
 
 const loginFailures = new Map<string, { count: number; firstAt: number }>();
 const BRUTE_WINDOW_MS = 60_000;
@@ -40,36 +49,76 @@ async function runBatchAnalyze(
   events: import("./types.js").SecurityEventRow[]
 ): Promise<{ results: import("./ai/classify.js").ClassifyResult[]; source: string }> {
   if (events.length === 0) return { results: [], source: "none" };
+
+  // Protocol Analysis Layer runs before AI Threat Detection Engine
+  const enrichedEvents = refreshProtocolAnalysis(events);
+
   const applyResults = (raw: import("./ai/classify.js").ClassifyResult[]) => {
-    const results = raw.map(diversifyConfidence);
-    for (const r of results) {
-      updateEventAnalysis(
-        r.id,
-        r.classification,
-        r.attack_type || null,
-        r.confidence,
-        r.reason + (r.feature_importance ? ` | Signals: ${r.feature_importance}` : "")
-      );
+    const diversified = raw.map(diversifyConfidence);
+    const finalized: import("./ai/classify.js").ClassifyResult[] = [];
+
+    for (const r of diversified) {
       const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(r.id) as
         | import("./types.js").SecurityEventRow
         | undefined;
-      if (row) {
-        // Auto-block policy for demo: confirmed attacks are added to blocked_ips.
-        if (r.classification === "confirmed_attack") {
-          const why = `Auto-block: ${r.attack_type || "attack"} · ${Math.round(r.confidence * 100)}% · ${r.reason}`;
-          upsertBlockedIp(row.source_ip, why);
-          publish({ type: "blocked_ip_updated", data: { ip: row.source_ip, reason: why } });
+      if (!row) continue;
+
+      const protocolAnalysis = analyzeProtocolTraffic(row);
+      const cryptoClass = r.crypto_threat_class || classifyCryptoThreat(row, protocolAnalysis, r.attack_type);
+      const metadata = buildAttackMetadata(row, protocolAnalysis, r.classification, r.attack_type, cryptoClass);
+      const normalized = normalizeClassifyResult(r, row, metadata);
+
+      updateEventAnalysis(
+        normalized.id,
+        normalized.classification,
+        normalized.attack_type || null,
+        normalized.confidence,
+        normalized.reason + (normalized.feature_importance ? ` | Signals: ${normalized.feature_importance}` : ""),
+        {
+          osi_layer: normalized.osi_layer || metadata.osi_layer,
+          protocol: normalized.protocol || metadata.protocol,
+          severity_score: normalized.severity_score ?? metadata.severity_score,
+          crypto_threat_class: normalized.crypto_threat_class || metadata.crypto_threat_class,
+          attack_metadata_json: JSON.stringify(metadata),
         }
-        publish({ type: "event_analyzed", data: row });
+      );
+
+      const mitigationResults = applyLayerAwareMitigation(row, metadata, normalized.classification);
+      const mitigationStatus = mitigationStatusFromResults(mitigationResults, normalized.classification);
+      if (mitigationStatus !== "none") {
+        getDb()
+          .prepare("UPDATE events SET mitigation_status = ? WHERE id = ?")
+          .run(mitigationStatus, normalized.id);
       }
+
+      if (
+        normalized.classification === "confirmed_attack" &&
+        metadata.osi_layer !== "Layer 3 - Network" &&
+        mitigationResults.length === 0
+      ) {
+        const why = `Auto-block: ${normalized.attack_type || "attack"} · ${Math.round(normalized.confidence * 100)}% · ${normalized.reason}`;
+        upsertBlockedIp(row.source_ip, why);
+        publish({ type: "blocked_ip_updated", data: { ip: row.source_ip, reason: why } });
+      }
+
+      const updated = getDb().prepare("SELECT * FROM events WHERE id = ?").get(r.id);
+      publish({ type: "event_analyzed", data: updated });
+
+      finalized.push({
+        ...normalized,
+        osi_layer: normalized.osi_layer || metadata.osi_layer,
+        protocol: normalized.protocol || metadata.protocol,
+        severity_score: normalized.severity_score ?? metadata.severity_score,
+        crypto_threat_class: normalized.crypto_threat_class || metadata.crypto_threat_class,
+      });
     }
-    return results;
+    return finalized;
   };
   try {
     if (!ai) throw new Error("Gemini key missing; falling back to heuristics");
-    let results = await classifyWithGemini(ai, events);
+    let results = await classifyWithGemini(ai, enrichedEvents);
     const seen = new Set(results.map((r) => r.id));
-    const missing = events.filter((e) => !seen.has(e.id));
+    const missing = enrichedEvents.filter((e) => !seen.has(e.id));
     if (missing.length) {
       results = [...results, ...classifyHeuristic(missing)];
     }
@@ -77,7 +126,7 @@ async function runBatchAnalyze(
     return { results: finalResults, source: "gemini" };
   } catch (e) {
     console.error("Analyze:", e);
-    const results = classifyHeuristic(events);
+    const results = classifyHeuristic(enrichedEvents);
     const finalResults = applyResults(results);
     return { results: finalResults, source: "heuristic_fallback" };
   }
@@ -95,6 +144,12 @@ function checkBruteForce(ip: string): string | null {
     return `Multiple failed logins (${rec.count}) from this IP within ${BRUTE_WINDOW_MS / 1000}s`;
   }
   return null;
+}
+
+function publishIngestedEvent(id: number): void {
+  processEventThroughProtocolLayer(id);
+  const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
+  publish({ type: "event_created", data: row });
 }
 
 export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
@@ -152,6 +207,64 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
 
   app.get("/api/blocked-ips", (_req, res) => {
     res.json(listBlockedIps());
+  });
+
+  /** Layer-aware threat widget: attack type, protocol, OSI layer, mitigation status */
+  app.get("/api/protocol/threats", (_req, res) => {
+    res.json(listProtocolThreats(40));
+  });
+
+  app.get("/api/protocol/mitigations", (req, res) => {
+    const eventId = req.query.eventId ? Number(req.query.eventId) : undefined;
+    res.json(listMitigationActions(eventId));
+  });
+
+  app.get("/api/protocol/architecture", (_req, res) => {
+    res.json({
+      pipeline: [
+        "Backend Application (ingest)",
+        "Protocol Analysis Layer (L3/L4/L7 feature extraction)",
+        "AI Threat Detection Engine (classification + severity)",
+        "Incident Response Engine (layer-aware mitigation)",
+        "Cross-Layer Cryptographic Security Module (PQC vs classical)",
+      ],
+      protectedLayers: PROTECTED_OSI_LAYERS,
+    });
+  });
+
+  app.post("/api/protocol/analyze", (req, res) => {
+    const body = req.body as {
+      source_ip?: string;
+      destination_ip?: string;
+      protocol?: string;
+      packet_count?: number;
+      destination_port?: number;
+      connection_attempts?: number;
+      api_requests?: number;
+      login_failures?: number;
+      description?: string;
+    };
+    const ip = body.source_ip || clientIp(req);
+    const id = insertEvent({
+      source_ip: ip,
+      event_kind: "network",
+      action: "traffic",
+      features_json: JSON.stringify({
+        destination_ip: body.destination_ip || "10.0.0.1",
+        protocol: body.protocol || "TCP",
+        packet_count: body.packet_count ?? 500,
+        destination_port: body.destination_port ?? 443,
+        connection_attempts: body.connection_attempts ?? 1,
+        api_requests: body.api_requests ?? 0,
+        login_failures: body.login_failures ?? 0,
+      }),
+      severity: (body.packet_count ?? 0) > 800 ? "high" : "medium",
+      description: body.description || `Protocol-analyzed traffic from ${ip}`,
+      status: "pending_analyze",
+    });
+    publishIngestedEvent(id);
+    const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
+    res.json({ ok: true, eventId: id, protocolAnalysis: row });
   });
 
   app.get("/api/stats", (_req, res) => {
@@ -237,7 +350,7 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
     });
 
     const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
-    publish({ type: "event_created", data: row });
+    publishIngestedEvent(id);
     if (suspicious) {
       publish({ type: "suspicious_login", data: { ip, message: suspicious } });
     }
@@ -327,7 +440,7 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
       status: "pending_analyze",
     });
     const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
-    publish({ type: "event_created", data: row });
+    publishIngestedEvent(id);
     res.json({ success: true, id });
   });
 

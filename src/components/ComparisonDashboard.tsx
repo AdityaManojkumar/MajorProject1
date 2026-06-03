@@ -10,6 +10,8 @@ import {
   CartesianGrid,
 } from "recharts";
 import type { DashboardStats, SecurityEvent } from "../types/event";
+import { apiUrl } from "../lib/api.ts";
+import { chartAxis, chartGrid, chartTooltip } from "../lib/ui.ts";
 
 const comparisonRows = [
   { factor: "Attack type", classical: "DDoS, brute force, botnet, scans", quantum: "Crypto break (RSA / ECC)" },
@@ -21,12 +23,12 @@ const comparisonRows = [
 ];
 
 const tableWrap =
-  "w-full border-collapse overflow-hidden rounded-xl border border-white/10 text-left text-[12px] leading-snug";
+  "w-full border-collapse overflow-hidden rounded-xl border border-slate-200 text-left text-[12px] leading-snug";
 const th =
-  "border-b border-white/10 bg-zinc-800/90 px-3 py-2.5 font-bold text-zinc-300 first:rounded-tl-xl last:rounded-tr-xl";
-const td = "border-b border-white/[0.06] px-3 py-2.5 text-zinc-400 align-top";
-const tdStrong = "border-b border-white/[0.06] px-3 py-2.5 font-semibold text-zinc-200 align-top";
-const trStripe = "even:bg-white/[0.03]";
+  "border-b border-slate-200 bg-slate-100 px-3 py-2.5 font-bold text-slate-600 first:rounded-tl-xl last:rounded-tr-xl";
+const td = "border-b border-slate-200 px-3 py-2.5 text-slate-600 align-top";
+const tdStrong = "border-b border-slate-200 px-3 py-2.5 font-semibold text-slate-800 align-top";
+const trStripe = "even:bg-slate-50";
 
 export function ComparisonDashboard({
   events,
@@ -38,7 +40,7 @@ export function ComparisonDashboard({
   const [stats, setStats] = useState<DashboardStats | null>(null);
 
   useEffect(() => {
-    fetch("/api/stats")
+    fetch(apiUrl("/api/stats"))
       .then((r) => r.json())
       .then(setStats)
       .catch(() => setStats(null));
@@ -79,12 +81,12 @@ export function ComparisonDashboard({
   return (
     <div className="space-y-8">
       {/* —— Tables first: quick scan —— */}
-      <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 p-6 space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-6 space-y-6">
         <div>
-          <h3 className="text-lg font-bold text-white mb-1">Classical attack demos vs quantum crypto threat</h3>
-          <p className="text-xs text-zinc-500 max-w-3xl">
-            Tables below mirror the charts: <strong className="text-zinc-400">classical</strong> counts are replay jobs,
-            overview scenarios, and login monitor volume. <strong className="text-zinc-400">Quantum</strong> counts RSA/Shor demo
+          <h3 className="text-lg font-bold text-slate-900 mb-1">Classical attack demos vs quantum crypto threat</h3>
+          <p className="text-xs text-slate-500 max-w-3xl">
+            Tables below mirror the charts: <strong className="text-slate-600">classical</strong> counts are replay jobs,
+            overview scenarios, and login monitor volume. <strong className="text-slate-600">Quantum</strong> counts RSA/Shor demo
             runs from the Quantum tab — not packet blocking.
           </p>
         </div>
@@ -117,7 +119,7 @@ export function ComparisonDashboard({
                     <td className={`${td} text-right tabular-nums text-blue-200`}>{loginN}</td>
                     <td className={td}>Login attempts captured on the Live tab</td>
                   </tr>
-                  <tr className="bg-blue-950/40 border-t border-blue-500/20">
+                  <tr className="bg-blue-50 border-t border-blue-200">
                     <td className={`${tdStrong} text-blue-200`}>Classical demo surface (Σ)</td>
                     <td className={`${td} text-right tabular-nums font-bold text-blue-100`}>{classicalSurface}</td>
                     <td className={td}>Sum of the three rows above — “how much classical-style demo traffic”</td>
@@ -174,16 +176,13 @@ export function ComparisonDashboard({
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-2">
           <div className="h-[280px]">
-            <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-3">Chart — demo volume</p>
+            <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-3">Chart — demo volume</p>
             <ResponsiveContainer width="100%" height="90%">
               <BarChart data={demoCompare} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                <YAxis tick={{ fill: "#a1a1aa", fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: "12px" }}
-                  labelStyle={{ color: "#fafafa" }}
-                />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: chartAxis, fontSize: 11 }} />
+                <YAxis tick={{ fill: chartAxis, fontSize: 11 }} allowDecimals={false} />
+                <Tooltip contentStyle={chartTooltip} labelStyle={{ color: "#334155" }} />
                 <Legend />
                 <Bar dataKey="classical" name="Classical demo traffic (Σ)" fill="#3b82f6" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="quantum_crypto" name="Quantum RSA demos" fill="#a855f7" radius={[6, 6, 0, 0]} />
@@ -192,13 +191,13 @@ export function ComparisonDashboard({
           </div>
 
           <div className="h-[280px]">
-            <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider mb-3">Chart — breakdown</p>
+            <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-3">Chart — breakdown</p>
             <ResponsiveContainer width="100%" height="90%">
               <BarChart data={breakdown} layout="vertical" margin={{ left: 8, right: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" horizontal={false} />
-                <XAxis type="number" tick={{ fill: "#a1a1aa", fontSize: 11 }} allowDecimals={false} />
-                <YAxis type="category" dataKey="name" width={140} tick={{ fill: "#d4d4d8", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: "12px" }} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} horizontal={false} />
+                <XAxis type="number" tick={{ fill: chartAxis, fontSize: 11 }} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fill: chartAxis, fontSize: 10 }} />
+                <Tooltip contentStyle={chartTooltip} />
                 <Bar dataKey="count" name="Events" fill="#10b981" radius={[0, 6, 6, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -208,7 +207,7 @@ export function ComparisonDashboard({
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="space-y-2">
-          <h4 className="text-[11px] font-bold uppercase tracking-wider text-orange-300">Table 3 — AI labels (database totals)</h4>
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-orange-700">Table 3 — AI labels (database totals)</h4>
           <div className="overflow-x-auto rounded-xl">
             <table className={tableWrap}>
               <thead>
@@ -221,7 +220,7 @@ export function ComparisonDashboard({
               <tbody>
                 <tr className={trStripe}>
                   <td className={tdStrong}>Attack-like</td>
-                  <td className={`${td} text-right tabular-nums text-orange-300`}>
+                  <td className={`${td} text-right tabular-nums text-orange-700`}>
                     {stats?.classicalAttacksDetected ?? "—"}
                   </td>
                   <td className={td}>confirmed_attack or ground_truth attack in DB</td>
@@ -255,7 +254,7 @@ export function ComparisonDashboard({
               <tbody>
                 {pieLike.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className={`${td} text-zinc-500 italic`}>
+                    <td colSpan={3} className={`${td} text-slate-500 italic`}>
                       No events loaded yet — open Logs / Live or replay a dataset.
                     </td>
                   </tr>
@@ -263,7 +262,7 @@ export function ComparisonDashboard({
                   pieLike.map((row) => (
                     <tr key={row.name} className={trStripe}>
                       <td className={tdStrong}>{row.name}</td>
-                      <td className={`${td} text-right tabular-nums text-emerald-200`}>{row.value}</td>
+                      <td className={`${td} text-right tabular-nums text-emerald-800`}>{row.value}</td>
                       <td className={td}>Current UI session snapshot (may differ from DB totals)</td>
                     </tr>
                   ))
@@ -275,41 +274,42 @@ export function ComparisonDashboard({
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-zinc-900/40 border border-blue-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-500 uppercase">AI: attack-like</p>
-          <p className="text-2xl font-bold text-orange-400">{stats?.classicalAttacksDetected ?? "—"}</p>
+        <div className="bg-white border border-blue-500/20 rounded-xl p-4">
+          <p className="text-[10px] text-slate-500 uppercase">AI: attack-like</p>
+          <p className="text-2xl font-bold text-orange-600">{stats?.classicalAttacksDetected ?? "—"}</p>
         </div>
-        <div className="bg-zinc-900/40 border border-yellow-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-500 uppercase">AI: suspicious</p>
-          <p className="text-2xl font-bold text-yellow-400">{stats?.suspiciousEvents ?? "—"}</p>
+        <div className="bg-white border border-yellow-500/20 rounded-xl p-4">
+          <p className="text-[10px] text-slate-500 uppercase">AI: suspicious</p>
+          <p className="text-2xl font-bold text-amber-600">{stats?.suspiciousEvents ?? "—"}</p>
         </div>
-        <div className="bg-zinc-900/40 border border-purple-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-500 uppercase">Quantum RSA demos</p>
-          <p className="text-2xl font-bold text-purple-400">{stats?.quantumVulnerabilityDemos ?? 0}</p>
+        <div className="bg-white border border-purple-500/20 rounded-xl p-4">
+          <p className="text-[10px] text-slate-500 uppercase">Quantum RSA demos</p>
+          <p className="text-2xl font-bold text-purple-600">{stats?.quantumVulnerabilityDemos ?? 0}</p>
         </div>
-        <div className="bg-zinc-900/40 border border-emerald-500/20 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-500 uppercase">PQC posture</p>
-          <p className="text-xs font-bold text-emerald-400 leading-snug">{stats?.pqcStatus ?? "—"}</p>
+        <div className="bg-white border border-emerald-500/20 rounded-xl p-4">
+          <p className="text-[10px] text-slate-500 uppercase">PQC posture</p>
+          <p className="text-xs font-bold text-emerald-700 leading-snug">{stats?.pqcStatus ?? "—"}</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6 h-[320px]">
-          <h4 className="text-sm font-bold text-white mb-4">AI threat labels (chart — same session as Table 4)</h4>
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 h-[320px]">
+          <h4 className="text-sm font-bold text-slate-900 mb-4">AI threat labels (chart — same session as Table 4)</h4>
           <ResponsiveContainer width="100%" height="85%">
             <BarChart data={pieLike.length ? pieLike : [{ name: "none", value: 0 }]}>
-              <XAxis dataKey="name" stroke="#71717a" fontSize={10} />
-              <YAxis stroke="#71717a" fontSize={10} allowDecimals={false} />
-              <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #27272a" }} />
+              <XAxis dataKey="name" stroke={chartAxis} fontSize={10} />
+              <YAxis stroke={chartAxis} fontSize={10} allowDecimals={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke={chartGrid} vertical={false} />
+              <Tooltip contentStyle={chartTooltip} />
               <Legend />
               <Bar dataKey="value" fill="#10b981" name="Count" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6 overflow-auto max-h-[420px]">
-          <h4 className="text-sm font-bold text-white mb-3">Table 5 — Threat model: classical vs quantum</h4>
-          <p className="text-[11px] text-zinc-500 mb-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-6 overflow-auto max-h-[420px]">
+          <h4 className="text-sm font-bold text-slate-900 mb-3">Table 5 — Threat model: classical vs quantum</h4>
+          <p className="text-[11px] text-slate-500 mb-4">
             Same idea as the comparison matrix — row-by-row so it’s easy to quote in a report.
           </p>
           <div className="overflow-x-auto rounded-xl">
@@ -324,7 +324,7 @@ export function ComparisonDashboard({
               <tbody>
                 {comparisonRows.map((r) => (
                   <tr key={r.factor} className={trStripe}>
-                    <td className={`${tdStrong} text-zinc-300`}>{r.factor}</td>
+                    <td className={`${tdStrong} text-slate-600`}>{r.factor}</td>
                     <td className={td}>{r.classical}</td>
                     <td className={td}>{r.quantum}</td>
                   </tr>
@@ -335,7 +335,7 @@ export function ComparisonDashboard({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-white/10 bg-zinc-950/50">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50">
         <table className={tableWrap}>
           <thead>
             <tr>

@@ -31,21 +31,21 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
   };
 
   return (
-    <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-6">
-      <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
-        <Play className="w-5 h-5 text-cyan-400" />
+    <div className="bg-white border border-slate-200 rounded-2xl p-6">
+      <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
+        <Play className="w-5 h-5 text-cyan-700" />
         Dataset replay
       </h3>
-      <div className="text-xs text-zinc-500 mb-4 space-y-2 leading-relaxed">
+      <div className="text-xs text-slate-500 mb-4 space-y-2 leading-relaxed">
         <p>
-          <strong className="text-zinc-400">What this does:</strong> reads rows from the sample CSV under{" "}
+          <strong className="text-slate-600">What this does:</strong> reads rows from the sample CSV under{" "}
           <code className="text-cyan-500/90">datasets/samples/</code>, then inserts each row into the same{" "}
-          <code className="text-cyan-500/90">events</code> table as timed application-layer traces (<code className="text-zinc-500">kind=application</code>) — same shape as a single
-          injection from <strong className="text-zinc-400">Overview → Quick simulate</strong>, but replayed on an interval until
+          <code className="text-cyan-500/90">events</code> table as timed application-layer traces (<code className="text-slate-500">kind=application</code>) — same shape as a single
+          injection from <strong className="text-slate-600">Overview → Quick simulate</strong>, but replayed on an interval until
           done or stopped.
         </p>
         <p>
-          Use <strong className="text-zinc-400">Start replay</strong> for continuous simulation; use Overview buttons for one-shot
+          Use <strong className="text-slate-600">Start replay</strong> for continuous simulation; use Overview buttons for one-shot
           dataset rows with a confirmation popup.
         </p>
       </div>
@@ -53,7 +53,7 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
         <select
           value={dataset}
           onChange={(e) => setDataset(e.target.value as typeof dataset)}
-          className="px-2 py-2 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+          className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-900"
         >
           <option value="cicids2017">CICIDS2017 sample</option>
           <option value="nsl-kdd">NSL-KDD sample</option>
@@ -62,7 +62,7 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
         <select
           value={attackType}
           onChange={(e) => setAttackType(e.target.value)}
-          className="px-2 py-2 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+          className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-900"
         >
           <option value="any">All attack-labeled rows</option>
           <option value="ddos">DDoS</option>
@@ -73,13 +73,13 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
         </select>
         <input
           type="number"
-          className="px-2 py-2 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+          className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-900"
           value={rateMs}
           onChange={(e) => setRateMs(Number(e.target.value))}
         />
         <input
           type="number"
-          className="px-2 py-2 rounded-lg bg-black/40 border border-white/10 text-xs text-white"
+          className="px-2 py-2 rounded-lg bg-slate-100 border border-slate-200 text-xs text-slate-900"
           value={count}
           onChange={(e) => setCount(Number(e.target.value))}
         />
@@ -88,7 +88,7 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
         <button
           type="button"
           onClick={start}
-          className="flex-1 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 text-sm font-bold rounded-lg border border-cyan-500/30 flex items-center justify-center gap-2"
+          className="flex-1 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-800 text-sm font-bold rounded-lg border border-cyan-500/30 flex items-center justify-center gap-2"
         >
           <Play className="w-4 h-4" /> Start replay
         </button>
@@ -100,7 +100,7 @@ export function DatasetReplayControls({ onReplayChange }: { onReplayChange: () =
           <Square className="w-4 h-4" />
         </button>
       </div>
-      {msg && <p className="mt-2 text-[10px] text-zinc-500">{msg}</p>}
+      {msg && <p className="mt-2 text-[10px] text-slate-500">{msg}</p>}
     </div>
   );
 }

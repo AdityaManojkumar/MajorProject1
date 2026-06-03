@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { SecurityEvent } from "../types/event";
 import { Radio } from "lucide-react";
+import { apiUrl } from "../lib/api.ts";
 
 export function RealtimePanel({
   events,
@@ -16,7 +17,7 @@ export function RealtimePanel({
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    const es = new EventSource("/api/stream");
+    const es = new EventSource(apiUrl("/api/stream"));
     esRef.current = es;
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
@@ -51,17 +52,17 @@ export function RealtimePanel({
   }, [onEventMessage, onEventAnalyzed]);
 
   return (
-    <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 h-full flex flex-col min-h-[200px]">
+    <div className="bg-white border border-slate-200 rounded-2xl p-4 h-full flex flex-col min-h-[200px]">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-sm font-bold text-white flex items-center gap-2">
-          <Radio className={`w-4 h-4 ${connected ? "text-emerald-400 animate-pulse" : "text-zinc-500"}`} />
+        <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+          <Radio className={`w-4 h-4 ${connected ? "text-emerald-700 animate-pulse" : "text-slate-500"}`} />
           Live stream
         </h4>
-        <span className="text-[10px] text-zinc-500">{connected ? "SSE connected" : "connecting…"}</span>
+        <span className="text-[10px] text-slate-500">{connected ? "SSE connected" : "connecting…"}</span>
       </div>
-      <p className="text-[10px] text-zinc-500 mb-2">Latest: {events[0]?.description?.slice(0, 80) ?? "—"}</p>
-      <div className="flex-1 overflow-y-auto font-mono text-[10px] text-zinc-400 space-y-1 max-h-[180px]">
-        {feed.length === 0 ? <span className="text-zinc-600">Waiting for events…</span> : feed.map((l, i) => <div key={i}>{l}</div>)}
+      <p className="text-[10px] text-slate-500 mb-2">Latest: {events[0]?.description?.slice(0, 80) ?? "—"}</p>
+      <div className="flex-1 overflow-y-auto font-mono text-[10px] text-slate-600 space-y-1 max-h-[180px]">
+        {feed.length === 0 ? <span className="text-slate-400">Waiting for events…</span> : feed.map((l, i) => <div key={i}>{l}</div>)}
       </div>
     </div>
   );

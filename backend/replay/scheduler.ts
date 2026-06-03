@@ -2,6 +2,7 @@ import type { ParsedRow } from "./loaders.js";
 import { loadDataset, filterAttackRows, type DatasetId } from "./loaders.js";
 import { insertEvent, getDb } from "../db.js";
 import { publish } from "../stream.js";
+import { processEventThroughProtocolLayer } from "../pipeline.js";
 
 let replayTimer: ReturnType<typeof setInterval> | null = null;
 let replayQueue: ParsedRow[] = [];
@@ -36,22 +37,23 @@ export function startReplay(
       publish({ type: "replay_complete", data: { dataset: replayDataset } });
       return;
     }
-    const row = replayQueue[replayIndex++];
+    const parsedRow = replayQueue[replayIndex++];
     const id = insertEvent({
-      source_ip: row.source_ip,
+      source_ip: parsedRow.source_ip,
       event_kind: "application",
       action: "layer7_trace",
-      features_json: JSON.stringify(row.raw),
+      features_json: JSON.stringify(parsedRow.raw),
       dataset: replayDataset,
-      ground_truth_label: row.ground_truth,
-      severity: row.ground_truth === "attack" ? "high" : "low",
-      description: row.description,
+      ground_truth_label: parsedRow.ground_truth,
+      severity: parsedRow.ground_truth === "attack" ? "high" : "low",
+      description: parsedRow.description,
       status: "pending_analyze",
     });
     onEvent(id);
+    const enriched = processEventThroughProtocolLayer(id);
     publish({
       type: "event_created",
-      data: getDb().prepare("SELECT * FROM events WHERE id = ?").get(id),
+      data: enriched ?? getDb().prepare("SELECT * FROM events WHERE id = ?").get(id),
     });
   };
 
@@ -90,8 +92,8 @@ export function injectDatasetSample(
     description: row.description,
     status: "pending_analyze",
   });
-  const full = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
-  publish({ type: "event_created", data: full });
+  const enriched = processEventThroughProtocolLayer(id);
+  publish({ type: "event_created", data: enriched ?? getDb().prepare("SELECT * FROM events WHERE id = ?").get(id) });
   return {
     id,
     sourceIp: row.source_ip,
