@@ -251,7 +251,7 @@ export function buildAttackMetadata(
     severityScore = event.severity === "high" ? 92 : 85;
   } else if (classification === "suspicious") {
     severity = "Medium";
-    severityScore = 58;
+    severityScore = event.suspicious_indicators ? 68 : 58;
   } else if (event.severity === "high") {
     severity = "High";
     severityScore = 78;

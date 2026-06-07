@@ -7,10 +7,12 @@ export function RealtimePanel({
   events,
   onEventMessage,
   onEventAnalyzed,
+  onBlockedIpUpdated,
 }: {
   events: SecurityEvent[];
   onEventMessage: (ev: SecurityEvent) => void;
   onEventAnalyzed: (ev: SecurityEvent) => void;
+  onBlockedIpUpdated?: () => void;
 }) {
   const [connected, setConnected] = useState(false);
   const [feed, setFeed] = useState<string[]>([]);
@@ -38,6 +40,14 @@ export function RealtimePanel({
             ...f.slice(0, 49),
           ]);
         }
+        if (msg.type === "blocked_ip_updated" && msg.data) {
+          onBlockedIpUpdated?.();
+          const block = msg.data as { ip?: string; reason?: string };
+          setFeed((f) => [
+            `[block] ${block.ip ?? "IP"} — ${(block.reason ?? "blocked").slice(0, 72)}`,
+            ...f.slice(0, 49),
+          ]);
+        }
         if (msg.type === "replay_started" || msg.type === "replay_complete" || msg.type === "suspicious_login") {
           setFeed((f) => [`[stream] ${msg.type}`, ...f.slice(0, 49)]);
         }
@@ -49,7 +59,7 @@ export function RealtimePanel({
       es.close();
       esRef.current = null;
     };
-  }, [onEventMessage, onEventAnalyzed]);
+  }, [onEventMessage, onEventAnalyzed, onBlockedIpUpdated]);
 
   return (
     <div className="bg-white border border-slate-200 rounded-2xl p-4 h-full flex flex-col min-h-[200px]">

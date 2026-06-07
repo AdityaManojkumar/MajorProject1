@@ -91,16 +91,6 @@ async function runBatchAnalyze(
           .run(mitigationStatus, normalized.id);
       }
 
-      if (
-        normalized.classification === "confirmed_attack" &&
-        metadata.osi_layer !== "Layer 3 - Network" &&
-        mitigationResults.length === 0
-      ) {
-        const why = `Auto-block: ${normalized.attack_type || "attack"} · ${Math.round(normalized.confidence * 100)}% · ${normalized.reason}`;
-        upsertBlockedIp(row.source_ip, why);
-        publish({ type: "blocked_ip_updated", data: { ip: row.source_ip, reason: why } });
-      }
-
       const updated = getDb().prepare("SELECT * FROM events WHERE id = ?").get(r.id);
       publish({ type: "event_analyzed", data: updated });
 
@@ -352,7 +342,15 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
     const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
     publishIngestedEvent(id);
     if (suspicious) {
+      upsertBlockedIp(ip, suspicious);
+      publish({ type: "blocked_ip_updated", data: { ip, reason: suspicious } });
       publish({ type: "suspicious_login", data: { ip, message: suspicious } });
+      const loginRow = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id) as
+        | import("./types.js").SecurityEventRow
+        | undefined;
+      if (loginRow) {
+        void runBatchAnalyze(ai, [loginRow]);
+      }
     }
 
     res.json({
@@ -390,7 +388,7 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
     res.json({ ok: true });
   });
 
-  app.post("/api/sim/inject-sample", (req, res) => {
+  app.post("/api/sim/inject-sample", async (req, res) => {
     const { dataset, attackType } = req.body as { dataset?: DatasetId; attackType?: string };
     if (!dataset || !["cicids2017", "nsl-kdd", "unsw-nb15"].includes(dataset)) {
       return res.status(400).json({ error: "dataset must be cicids2017 | nsl-kdd | unsw-nb15" });
@@ -398,6 +396,12 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
     const inject = injectDatasetSample(dataset, attackType);
     if (!inject) {
       return res.status(404).json({ error: "Sample CSV empty or missing — check datasets/samples/" });
+    }
+    const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(inject.id) as
+      | import("./types.js").SecurityEventRow
+      | undefined;
+    if (row) {
+      await runBatchAnalyze(ai, [row]);
     }
     res.json({ ok: true, inject });
   });
@@ -425,7 +429,7 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
     res.json({ processed: results.length, results: enrichAnalysisResults(results), source });
   });
 
-  app.post("/api/simulate-attack", (req, res) => {
+  app.post("/api/simulate-attack", async (req, res) => {
     const { type } = req.body as { type?: string };
     const ips = ["192.168.1.50", "45.33.22.11", "10.0.0.5", "172.16.0.20"];
     const randomIp = ips[Math.floor(Math.random() * ips.length)];
@@ -439,8 +443,13 @@ export function registerApiRoutes(app: Express, ai: GoogleGenAI | null): void {
       description: `Simulated potential ${eventType} from ${randomIp}`,
       status: "pending_analyze",
     });
-    const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id);
     publishIngestedEvent(id);
+    const row = getDb().prepare("SELECT * FROM events WHERE id = ?").get(id) as
+      | import("./types.js").SecurityEventRow
+      | undefined;
+    if (row) {
+      await runBatchAnalyze(ai, [row]);
+    }
     res.json({ success: true, id });
   });
 

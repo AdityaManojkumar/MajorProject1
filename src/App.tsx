@@ -84,6 +84,17 @@ export default function App() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [injectErr, setInjectErr] = useState<string | null>(null);
 
+  const fetchBlockedIps = useCallback(async () => {
+    try {
+      const blockedRes = await fetch(apiUrl("/api/blocked-ips"));
+      if (blockedRes.ok) {
+        setBlockedIps((await blockedRes.json()) as BlockedIp[]);
+      }
+    } catch (e) {
+      console.error("Blocked IP fetch error:", e);
+    }
+  }, []);
+
   const fetchData = useCallback(async () => {
     try {
       const [evRes, blockedRes] = await Promise.all([
@@ -91,7 +102,9 @@ export default function App() {
         fetch(apiUrl("/api/blocked-ips")),
       ]);
       setEvents((await evRes.json()) as SecurityEvent[]);
-      setBlockedIps((await blockedRes.json()) as BlockedIp[]);
+      if (blockedRes.ok) {
+        setBlockedIps((await blockedRes.json()) as BlockedIp[]);
+      }
     } catch (e) {
       console.error("Fetch Error:", e);
     }
@@ -139,6 +152,7 @@ export default function App() {
       if (data.inject) setInjectModal(data.inject);
       setStatsRefresh((k) => k + 1);
       await fetchData();
+      await fetchBlockedIps();
     } catch (e) {
       setInjectErr(e instanceof Error ? e.message : "Injection failed");
     }
@@ -161,6 +175,7 @@ export default function App() {
       setAnalysisReport(data);
       setStatsRefresh((k) => k + 1);
       await fetchData();
+      await fetchBlockedIps();
     } catch (e) {
       setAnalysisError(e instanceof Error ? e.message : "Analysis failed");
       setAnalysisReport(null);
@@ -559,6 +574,7 @@ export default function App() {
               events={events}
               onEventMessage={onEventMessage}
               onEventAnalyzed={onEventAnalyzed}
+              onBlockedIpUpdated={fetchBlockedIps}
             />
           </div>
         )}
@@ -580,10 +596,18 @@ export default function App() {
           <div className="space-y-6">
             <ProtocolThreatWidget refreshKey={statsRefresh} />
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-              <h3 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
+              <h3 className="text-lg font-bold text-slate-900 mb-2 flex items-center gap-2">
                 <ShieldAlert className="w-5 h-5 text-orange-600" />
-                Blocked IPs (legacy / optional)
+                Blocked IPs
+                {blockedIps.length > 0 && (
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                    {blockedIps.length}
+                  </span>
+                )}
               </h3>
+              <p className="text-xs text-slate-500 mb-6">
+                IPs auto-blocked when AI flags suspicious activity or confirmed attacks. Run analysis or use Quick simulate to populate this list.
+              </p>
               <div className="space-y-3">
                 {blockedIps.length === 0 ? (
                   <p className="text-slate-500 text-sm">No blocked IPs.</p>

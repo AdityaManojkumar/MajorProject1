@@ -133,6 +133,11 @@ export function applyLayerAwareMitigation(
     });
   }
 
+  const concernBlock = applyConcernIpBlock(event, metadata, classification, results);
+  if (concernBlock.length > 0) {
+    results.push(...concernBlock);
+  }
+
   if (results.length > 0) {
     publish({
       type: "mitigation_applied",
@@ -141,6 +146,51 @@ export function applyLayerAwareMitigation(
   }
 
   return results;
+}
+
+/** Block IPs flagged as suspicious or confirmed when layer actions did not already block. */
+function applyConcernIpBlock(
+  event: SecurityEventRow,
+  metadata: AttackMetadata,
+  classification: string,
+  existing: MitigationResult[]
+): MitigationResult[] {
+  if (classification === "normal" || !event.source_ip) return [];
+  if (existing.some((r) => r.action_type === "ip_blocking")) return [];
+
+  const isConcern =
+    classification === "confirmed_attack" ||
+    classification === "suspicious" ||
+    Boolean(event.suspicious_indicators);
+
+  if (!isConcern) return [];
+
+  const shouldBlock =
+    classification === "confirmed_attack" ||
+    metadata.severity_score >= 55 ||
+    Boolean(event.suspicious_indicators);
+
+  if (!shouldBlock) return [];
+
+  const reason =
+    classification === "suspicious"
+      ? `Concern block: ${metadata.attack_type || "suspicious activity"} from ${event.source_ip}${
+          event.suspicious_indicators ? ` · ${event.suspicious_indicators}` : ""
+        }`
+      : `Auto-block: ${metadata.attack_type} from ${event.source_ip} (${metadata.severity}, score ${metadata.severity_score})`;
+
+  upsertBlockedIp(event.source_ip, reason);
+  insertMitigationAction(event.id, metadata.osi_layer, "ip_blocking", "applied", reason);
+  publish({ type: "blocked_ip_updated", data: { ip: event.source_ip, reason } });
+
+  return [
+    {
+      action_type: "ip_blocking",
+      osi_layer: metadata.osi_layer,
+      status: "applied",
+      details: reason,
+    },
+  ];
 }
 
 export function mitigationStatusFromResults(
